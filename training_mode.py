@@ -28,7 +28,6 @@ COMBO_MAP = {
     (6, 6.1): "right_uppercut_head",
     (6, 6.2): "right_uppercut_body"
 }
-
 def parse_combo_string(combo_str):
     """Parse combo string like '1,2,3.1,4.2' into list of punch keys."""
     combo_keys = []
@@ -50,16 +49,41 @@ def parse_combo_string(combo_str):
     
     return combo_keys
 
-def initialize_tts_engine():
-    """Initialize and configure the TTS engine."""
-    engine = pyttsx3.init()
-    
-    # Configure speech rate and volume
-    rate = engine.getProperty('rate')
-    engine.setProperty('rate', rate - 50)  # Slightly slower speech
-    engine.setProperty('volume', 0.9)
-    
-    return engine
+def speak_prompt(text):
+    """Speak text using a fresh TTS engine instance to avoid threading issues."""
+    try:
+        # Create fresh engine for each prompt to avoid Windows SAPI issues
+        engine = pyttsx3.init()
+        
+        # Quick setup
+        engine.setProperty('rate', 150)
+        engine.setProperty('volume', 1.0)
+        
+        # Set voice
+        voices = engine.getProperty('voices')
+        if voices:
+            engine.setProperty('voice', voices[0].id)
+        
+        print(f"SPEAKING: {text}")
+        engine.say(text)
+        engine.runAndWait()
+        
+        # Cleanup
+        engine.stop()
+        del engine
+        
+        # Ensure completion
+        time.sleep(0.3)
+        
+    except Exception as e:
+        print(f"TTS Error: {e}")
+        print(f"FALLBACK PROMPT: {text}")
+        # Audio beep as fallback
+        try:
+            import winsound
+            winsound.Beep(800, 200)  # High beep
+        except:
+            pass
 
 def get_next_session_number():
     """Find the next available session number."""
@@ -119,8 +143,9 @@ def main():
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(video_filename, fourcc, fps, (width, height))
     
-    # Initialize TTS engine
-    tts_engine = initialize_tts_engine()
+    # Test TTS before starting
+    print("Testing TTS system...")
+    speak_prompt("TTS test - ready to train")
     
     # Prepare CSV file
     csv_data = []
@@ -128,7 +153,31 @@ def main():
     
     try:
         print("\nStarting training session in 3 seconds...")
-        time.sleep(3)
+        print("Position yourself in the webcam view, then press SPACE to start or 'q' to quit...")
+        
+        # Show webcam preview for positioning
+        preview_start = time.time()
+        while time.time() - preview_start < 10:  # 10 second preview window
+            ret, frame = cap.read()
+            if ret:
+                # Add instruction overlay
+                cv2.putText(frame, "Position yourself in frame", (10, 30), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(frame, "Press SPACE to start, 'q' to quit", (10, 60), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                
+                cv2.imshow('Training Mode - Position Check', frame)
+                
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord(' '):  # Space to start
+                    break
+                elif key == ord('q'):  # Quit
+                    print("Training cancelled by user.")
+                    return
+        
+        cv2.destroyAllWindows()
+        print("Starting training sequence...")
+        time.sleep(1)
         
         # Main training loop
         for i, combo_key in enumerate(combo_keys):
@@ -142,6 +191,15 @@ def main():
             if ret:
                 out.write(frame)
                 
+                # Show live preview during training (smaller window)
+                preview_frame = cv2.resize(frame, (320, 240))
+                cv2.putText(preview_frame, f"Recording: {prompt}", (5, 20), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+                cv2.putText(preview_frame, f"Frame: {frame_count}", (5, 35), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+                cv2.imshow('Training Live', preview_frame)
+                cv2.waitKey(1)
+                
                 # Log this frame with the punch key
                 csv_data.append({
                     'frame_index': frame_count,
@@ -150,9 +208,8 @@ def main():
                 
                 frame_count += 1
             
-            # THEN speak the prompt
-            tts_engine.say(prompt)
-            tts_engine.runAndWait()
+            # THEN speak the prompt using improved TTS function
+            speak_prompt(prompt)
             
             # Sleep for the specified interval
             if i < len(combo_keys) - 1:  # Don't sleep after the last prompt
@@ -162,8 +219,17 @@ def main():
                     ret, frame = cap.read()
                     if ret:
                         out.write(frame)
+                        
+                        # Update live preview
+                        preview_frame = cv2.resize(frame, (320, 240))
+                        remaining_time = args.interval - (time.time() - sleep_start)
+                        cv2.putText(preview_frame, f"Next in: {remaining_time:.1f}s", (5, 50), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+                        cv2.imshow('Training Live', preview_frame)
+                        cv2.waitKey(1)
+                        
                         frame_count += 1
-                    time.sleep(0.01)  # Small delay to prevent excessive CPU usage
+                    time.sleep(0.03)  # ~30fps capture rate
         
         # Continue capturing for 1 additional second to finalize
         print("Finalizing recording...")
@@ -172,8 +238,18 @@ def main():
             ret, frame = cap.read()
             if ret:
                 out.write(frame)
+                
+                # Update live preview
+                preview_frame = cv2.resize(frame, (320, 240))
+                cv2.putText(preview_frame, "Finalizing...", (5, 20), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+                cv2.imshow('Training Live', preview_frame)
+                cv2.waitKey(1)
+                
                 frame_count += 1
-            time.sleep(0.01)
+            time.sleep(0.03)
+        
+        cv2.destroyAllWindows()
         
         # Write CSV data
         with open(csv_filename, 'w', newline='') as csvfile:
@@ -195,13 +271,10 @@ def main():
         
     finally:
         # Clean up resources
-        cap.release()
-        out.release()
-        cv2.destroyAllWindows()
-        
-        # Cleanup TTS engine
         try:
-            tts_engine.stop()
+            cap.release()
+            out.release()
+            cv2.destroyAllWindows()
         except:
             pass
 
