@@ -201,70 +201,103 @@ class GuidedLabelSession:
         print(f"\n=== INTERACTIVE SESSION ENDED ===")
 
 
-def parse_combo_keys(combo_input: str) -> List[Union[int, float]]:
-    """Parse combo keys from string input."""
-    keys = []
-    for key_str in combo_input.split(','):
-        key_str = key_str.strip()
-        try:
-            key = float(key_str) if '.' in key_str else int(key_str)
-            if key in COMBO_MAP:
-                keys.append(key)
-            else:
-                print(f"Warning: Invalid punch key {key}")
-        except ValueError:
-            print(f"Warning: Could not parse '{key_str}'")
-    return keys
+def speak_text(text):
+    """Speak text using TTS with fresh engine initialization."""
+    try:
+        # Create fresh engine for each call (fixes Windows TTS issues)
+        engine = pyttsx3.init()
+        engine.setProperty('rate', 150)
+        engine.setProperty('volume', 0.8)
+        
+        print(f"Speaking: '{text}'")
+        engine.say(text)
+        engine.runAndWait()
+        
+        # Clean up
+        engine.stop()
+        del engine
+        
+        print(f"Speech completed: {text}")
+        return True
+        
+    except Exception as e:
+        print(f"TTS Error: {e}")
+        return False
 
 
 def main():
     parser = argparse.ArgumentParser(description="Guided Labeling Session for AI Boxing Trainer")
-    parser.add_argument('--combo', type=str, help='Comma-separated punch keys (e.g., "1,2,1.1,2.1,4,1")')
-    parser.add_argument('--json-file', type=str, help='JSON file containing punch key array')
+    parser.add_argument('--combo', required=True, help='Comma-separated punch keys, e.g. 1,2,1.1,2.1')
     parser.add_argument('--output', type=str, default='ground_truth.csv', help='Output CSV file')
     parser.add_argument('--interval', type=float, default=1.0, help='Interval between prompts (seconds)')
-    parser.add_argument('--interactive', action='store_true', help='Run in interactive mode')
     
     args = parser.parse_args()
     
-    # Create session
-    session = GuidedLabelSession(output_file=args.output, prompt_interval=args.interval)
+    # Parse combo list
+    combo_list = [float(x.strip()) for x in args.combo.split(',')]
     
-    # Determine input method
-    combo_keys = []
+    print(f"Parsed combo_list: {combo_list}")
+    print(f"Total items: {len(combo_list)}")
     
-    if args.interactive:
-        session.run_interactive_session()
-        return
+    # Test TTS
+    print("Testing TTS...")
+    if not speak_text("TTS test complete"):
+        print("Warning: TTS may not be working properly")
     
-    if args.json_file:
-        try:
-            with open(args.json_file, 'r') as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    combo_keys = [float(k) if isinstance(k, float) else int(k) for k in data if k in COMBO_MAP]
-                else:
-                    print("Error: JSON file must contain an array of punch keys")
-                    return
-        except Exception as e:
-            print(f"Error reading JSON file: {e}")
-            return
+    # Initialize CSV logging
+    session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    elif args.combo:
-        combo_keys = parse_combo_keys(args.combo)
+    # Create CSV file with headers if it doesn't exist
+    file_exists = os.path.exists(args.output)
+    with open(args.output, 'a', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        if not file_exists:
+            writer.writerow(['session', 'frame_index', 'punch_key'])
     
-    else:
-        print("No input provided. Use --combo, --json-file, or --interactive")
-        print("\nExample usage:")
-        print("  python guided_label_session.py --combo '1,2,1.1,2.1,4,1'")
-        print("  python guided_label_session.py --json-file combo.json")
-        print("  python guided_label_session.py --interactive")
-        return
+    print(f"\n=== Starting Session {session_id} ===")
+    print("Get ready...")
+    time.sleep(2)
     
-    if combo_keys:
-        session.run_combo_session(combo_keys)
-    else:
-        print("No valid punch keys found")
+    # Main execution loop
+    frame_index = 0
+    for i, key in enumerate(combo_list):
+        if key not in COMBO_MAP:
+            print(f"Warning: Unknown punch key {key}, skipping")
+            continue
+            
+        # Generate prompt text
+        prompt_text = COMBO_MAP[key].replace('_', ' ')
+        full_prompt = f"{prompt_text} go!"
+        
+        print(f"Prompting: {prompt_text}")  # debug print to console
+        
+        # Speak the prompt using fresh TTS engine
+        full_prompt = f"{prompt_text} go!"
+        success = speak_text(full_prompt)
+        
+        if not success:
+            print(f"Audio failed for: {prompt_text}")
+        
+        # Small delay after speech
+        time.sleep(0.3)
+        
+        # Log to CSV
+        with open(args.output, 'a', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow([session_id, frame_index, key])
+        
+        print(f"Logged: Frame {frame_index}, Punch {key}")
+        frame_index += 1
+        
+        # Pause before next (except for last item)
+        if i < len(combo_list) - 1:
+            print(f"Waiting {args.interval} seconds before next prompt...")
+            time.sleep(args.interval)  # pause before next
+    
+    print(f"\n=== Session Complete ===")
+    print(f"Processed {len(combo_list)} prompts")
+    print(f"Data logged to {args.output}")
+    print("ALL AUDIO PROMPTS SHOULD HAVE BEEN SPOKEN!")
 
 
 if __name__ == "__main__":
