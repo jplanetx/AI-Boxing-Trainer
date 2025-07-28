@@ -72,6 +72,7 @@ class GuidedLabelSession:
         """Use TTS to speak the given text."""
         if self.tts_engine:
             try:
+                print(f"Speaking: {text}")
                 self.tts_engine.say(text)
                 self.tts_engine.runAndWait()
             except Exception as e:
@@ -99,14 +100,16 @@ class GuidedLabelSession:
         # Convert to natural speech
         parts = punch_name.split('_')
         if len(parts) >= 2:
-            punch_type = parts[0]
-            target = parts[1]
-            
-            # Make it more natural
-            if punch_type == "lead":
-                punch_type = "lead hook" if "hook" in punch_name else "lead uppercut"
-            elif punch_type == "rear":
-                punch_type = "rear hook" if "hook" in punch_name else "rear uppercut"
+            # Handle compound punch types
+            if parts[0] == "lead" and len(parts) >= 3:
+                punch_type = f"lead {parts[1]}"  # lead hook, lead uppercut
+                target = parts[2]  # head, body
+            elif parts[0] == "rear" and len(parts) >= 3:
+                punch_type = f"rear {parts[1]}"  # rear hook, rear uppercut  
+                target = parts[2]  # head, body
+            else:
+                punch_type = parts[0]  # jab, cross
+                target = parts[1]  # head, body
             
             return f"{punch_type.title()} to the {target} - GO!"
         
@@ -135,6 +138,8 @@ class GuidedLabelSession:
                 # Generate and speak prompt
                 prompt = self._format_punch_prompt(punch_key)
                 print(f"\nPunch {i+1}/{len(combo_keys)}: {prompt}")
+                
+                # Speak the prompt (includes debug print and runAndWait)
                 self._speak_prompt(prompt)
                 
                 # Log the punch
@@ -142,6 +147,7 @@ class GuidedLabelSession:
                 
                 # Wait for next prompt (except for last punch)
                 if i < len(combo_keys) - 1:
+                    print(f"Waiting {self.prompt_interval} seconds...")
                     time.sleep(self.prompt_interval)
             
             print(f"\n=== SESSION COMPLETED ===")
