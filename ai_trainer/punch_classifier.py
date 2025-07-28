@@ -171,7 +171,19 @@ class PunchClassifier:
         if self.is_punch_motion(active):
             # Reset buffer to avoid duplicate detection
             self.trajectory_buffers[active].clear()
-            return { 'arm': active, 'type': 'punch' }
+            
+            # Map to punch_key format (simplified detection for now)
+            # This can be enhanced with more sophisticated classification
+            if active == 'left':
+                punch_key = 1  # Default to jab_head for left arm
+            else:
+                punch_key = 2  # Default to cross_head for right arm
+                
+            return { 
+                'arm': active, 
+                'type': 'punch',
+                'punch_key': punch_key
+            }
         return None
 
     def classify_punch(self, landmarks: Dict[str, np.ndarray], arm: str, training_mode=None) -> tuple:
