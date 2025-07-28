@@ -1,0 +1,356 @@
+"""
+Punch Classification System - Distinguishes between jab, cross, hook, and uppercut.
+Uses 3D trajectory analysis and biomechanical principles from the project plan.
+"""
+
+import numpy as np
+import time
+from typing import Dict, List, Optional, Tuple
+from collections import deque
+from enum import Enum
+
+from .utils import (
+    calculate_angle, 
+    calculate_distance, 
+    extract_trajectory_vector,
+    is_guard_position,
+    is_extended_position
+)
+from .heavy_bag_optimizer import TrainingMode
+
+
+class PunchType(Enum):
+    """Enumeration of punch types."""
+    JAB = "jab"
+    CROSS = "cross" 
+    HOOK = "hook"
+    UPPERCUT = "uppercut"
+    UNKNOWN = "unknown"
+
+
+class PunchStage(Enum):
+    """Enumeration of punch execution stages."""
+    GUARD = "guard"
+    PUNCHING = "punching"
+    RETURNING = "returning"
+
+
+class PunchClassifier:
+    """
+    Advanced punch classification using 3D trajectory analysis.
+    Implements the pseudocode from the project plan for accurate punch type detection.
+    """
+    
+    def __init__(self, trajectory_buffer_size: int = 30, fps: int = 30):
+        """
+        Initialize the punch classifier.
+        
+        Args:
+            trajectory_buffer_size: Number of frames to store for trajectory analysis
+            fps: Expected frames per second for timing calculations
+        """
+        self.trajectory_buffer_size = trajectory_buffer_size
+        self.fps = fps
+        
+        # Trajectory buffers for each arm
+        self.trajectory_buffers = {
+            'left': deque(maxlen=trajectory_buffer_size),
+            'right': deque(maxlen=trajectory_buffer_size)
+        }
+        
+        # Punch tracking state
+        self.punch_stages = {'left': PunchStage.GUARD, 'right': PunchStage.GUARD}
+        self.punch_counts = {'left': 0, 'right': 0}
+        self.punch_scores = {'left': 0, 'right': 0}
+        self.last_punch_time = {'left': 0, 'right': 0}
+        self.last_punch_types = {'left': PunchType.UNKNOWN, 'right': PunchType.UNKNOWN}
+        
+        # Classification thresholds (from biomechanical analysis)
+        self.thresholds = {
+            'guard_elbow_angle': 60,
+            'guard_shoulder_angle': 45,
+            'extension_angle': 160,
+            'uppercut_vertical_threshold': 0.7,
+            'hook_horizontal_ratio': 1.5,
+            'min_punch_distance': 0.1,  # Minimum distance for valid punch
+            'max_punch_duration': 1.0   # Maximum punch duration in seconds
+        }
+    
+    def update_trajectory(self, landmarks_dict: Dict, arm: str) -> None:
+        """
+        Update the trajectory buffer with new wrist position.
+        
+        Args:
+            landmarks_dict: 3D landmarks from pose tracker
+            arm: 'left' or 'right'
+        """
+        if not landmarks_dict:
+            return
+            
+        wrist_key = f'{arm}_wrist'
+        if wrist_key not in landmarks_dict:
+            return
+            
+        wrist = landmarks_dict[wrist_key]
+        if not wrist or wrist.get('visibility', 0) < 0.3:  # Very low threshold for trajectory
+            return
+            
+        timestamp = time.time()
+        
+        try:
+            trajectory_point = {
+                'position': [wrist['x'], wrist['y'], wrist['z']],
+                'timestamp': timestamp,
+                'visibility': wrist['visibility']
+            }
+            
+            self.trajectory_buffers[arm].append(trajectory_point)
+        except (KeyError, TypeError):
+            # Skip this frame if wrist data is malformed
+            pass
+    
+    def classify_punch(self, landmarks_dict: Dict, arm: str, 
+                      training_mode: TrainingMode = TrainingMode.SHADOWBOXING) -> Tuple[PunchType, int, float]:
+        """
+        Classify punch type and update tracking state.
+        
+        Args:
+            landmarks_dict: 3D landmarks from pose tracker
+            arm: 'left' or 'right'
+            training_mode: Current training mode for adjusted thresholds
+            
+        Returns:
+            Tuple of (punch_type, punch_count, punch_score)
+        """
+        if not landmarks_dict:
+            return self.last_punch_types[arm], self.punch_counts[arm], self.punch_scores[arm]
+        
+        # Update trajectory buffer
+        self.update_trajectory(landmarks_dict, arm)
+        
+        # Get current arm landmarks with confidence-based fallbacks
+        try:
+            shoulder = landmarks_dict.get(f'{arm}_shoulder')
+            elbow = landmarks_dict.get(f'{arm}_elbow')
+            wrist = landmarks_dict.get(f'{arm}_wrist')
+            
+            # Check if essential landmarks are available
+            if not all([shoulder, elbow, wrist]):
+                return self.last_punch_types[arm], self.punch_counts[arm], self.punch_scores[arm]
+            
+            # For heavy bag mode, hip data might be unreliable
+            hip = landmarks_dict.get(f'{arm}_hip')
+            if not hip or hip.get('visibility', 0) < 0.5:
+                # Use opposite hip if current hip is occluded
+                opposite_arm = 'right' if arm == 'left' else 'left'
+                hip = landmarks_dict.get(f'{opposite_arm}_hip')
+                
+        except (KeyError, AttributeError):
+            # Insufficient landmark data for classification
+            return self.last_punch_types[arm], self.punch_counts[arm], self.punch_scores[arm]
+        
+        # Calculate current angles with confidence weighting and safety checks
+        try:
+            elbow_angle = calculate_angle(
+                [shoulder['x'], shoulder['y']], 
+                [elbow['x'], elbow['y']], 
+                [wrist['x'], wrist['y']]
+            )
+        except (KeyError, TypeError):
+            # Use last known angle or default
+            elbow_angle = 90  # Default neutral position
+        
+        # Only calculate shoulder angle if hip data is reliable
+        shoulder_angle = 45  # Default assumption for guard check
+        if hip and hip.get('visibility', 0) > 0.5:
+            try:
+                shoulder_angle = calculate_angle(
+                    [hip['x'], hip['y']], 
+                    [shoulder['x'], shoulder['y']], 
+                    [elbow['x'], elbow['y']]
+                )
+            except (KeyError, TypeError):
+                shoulder_angle = 45  # Safe default
+        
+        # Adjust thresholds based on training mode
+        guard_elbow_threshold = self.thresholds['guard_elbow_angle']
+        guard_shoulder_threshold = self.thresholds['guard_shoulder_angle']
+        extension_threshold = self.thresholds['extension_angle']
+        
+        # Heavy bag mode adjustments - more lenient thresholds due to angled positioning
+        if training_mode == TrainingMode.HEAVY_BAG:
+            guard_elbow_threshold += 10    # Allow wider guard position
+            guard_shoulder_threshold += 15 # More lenient shoulder positioning
+            extension_threshold -= 10      # Easier to trigger punch detection
+        
+        # State machine for punch detection
+        current_stage = self.punch_stages[arm]
+        
+        if current_stage == PunchStage.GUARD:
+            # Check if still in guard position
+            if is_guard_position(elbow_angle, shoulder_angle, 
+                               guard_elbow_threshold, guard_shoulder_threshold):
+                self.punch_stages[arm] = PunchStage.GUARD
+            # Check for punch initiation
+            elif is_extended_position(elbow_angle, extension_threshold):
+                self.punch_stages[arm] = PunchStage.PUNCHING
+                self.punch_counts[arm] += 1
+                self.last_punch_time[arm] = time.time()
+                
+                # Classify the punch type
+                punch_type = self._analyze_punch_trajectory(landmarks_dict, arm, training_mode)
+                self.last_punch_types[arm] = punch_type
+                
+        elif current_stage == PunchStage.PUNCHING:
+            # Check for return to guard
+            if is_guard_position(elbow_angle, shoulder_angle,
+                               guard_elbow_threshold, guard_shoulder_threshold):
+                self.punch_stages[arm] = PunchStage.GUARD
+                
+                # Calculate punch score based on speed
+                duration = time.time() - self.last_punch_time[arm]
+                if duration > 0:
+                    self.punch_scores[arm] = min(100, (1 / duration) * 100)
+        
+        return self.last_punch_types[arm], self.punch_counts[arm], self.punch_scores[arm]
+    
+    def _analyze_punch_trajectory(self, landmarks_dict: Dict, arm: str, 
+                                training_mode: TrainingMode = TrainingMode.SHADOWBOXING) -> PunchType:
+        """
+        Analyze punch trajectory to determine punch type.
+        Implements the classification logic from the project plan with heavy bag optimizations.
+        
+        Args:
+            landmarks_dict: 3D landmarks
+            arm: 'left' or 'right'
+            training_mode: Current training mode for adjusted thresholds
+            
+        Returns:
+            Classified punch type
+        """
+        trajectory_buffer = self.trajectory_buffers[arm]
+        
+        if len(trajectory_buffer) < 10:  # Need enough points for analysis
+            return PunchType.UNKNOWN
+        
+        # Extract positions for trajectory analysis
+        positions = [point['position'] for point in trajectory_buffer]
+        
+        # Calculate trajectory vector
+        trajectory_vector = extract_trajectory_vector(positions[-10:])  # Last 10 frames
+        
+        if np.linalg.norm(trajectory_vector) < self.thresholds['min_punch_distance']:
+            return PunchType.UNKNOWN
+        
+        # Adjust thresholds for heavy bag mode (angled positioning affects trajectory analysis)
+        uppercut_threshold = self.thresholds['uppercut_vertical_threshold']
+        hook_ratio_threshold = self.thresholds['hook_horizontal_ratio']
+        
+        if training_mode == TrainingMode.HEAVY_BAG:
+            uppercut_threshold *= 0.8      # Slightly lower threshold due to angled view
+            hook_ratio_threshold *= 0.8    # More sensitive hook detection
+        
+        # 1. Check for UPPERCUT (high vertical component)
+        vertical_component = abs(trajectory_vector[2]) / np.linalg.norm(trajectory_vector)
+        if vertical_component > uppercut_threshold:
+            return PunchType.UPPERCUT
+        
+        # 2. Check for HOOK (horizontal lateral movement)
+        horizontal_ratio = abs(trajectory_vector[0]) / max(abs(trajectory_vector[1]), 0.001)
+        if horizontal_ratio > hook_ratio_threshold:
+            return PunchType.HOOK
+        
+        # 3. Distinguish between JAB and CROSS based on lead hand
+        if self._is_lead_hand(landmarks_dict, arm, training_mode):
+            return PunchType.JAB
+        else:
+            return PunchType.CROSS
+    
+    def _is_lead_hand(self, landmarks_dict: Dict, arm: str, 
+                     training_mode: TrainingMode = TrainingMode.SHADOWBOXING) -> bool:
+        """
+        Determine if the arm is the lead hand based on stance.
+        Enhanced for heavy bag mode with fallback detection methods.
+        
+        Args:
+            landmarks_dict: 3D landmarks
+            arm: 'left' or 'right'
+            training_mode: Current training mode
+            
+        Returns:
+            True if this is the lead hand
+        """
+        # For heavy bag mode, use simplified heuristics since depth detection may be less reliable
+        if training_mode == TrainingMode.HEAVY_BAG:
+            # Assume orthodox stance (left lead) for most users
+            # Can be enhanced with user settings later
+            return arm == 'left'
+        
+        try:
+            left_shoulder = landmarks_dict.get('left_shoulder')
+            right_shoulder = landmarks_dict.get('right_shoulder')
+            
+            # Check if we have the required landmarks
+            if not left_shoulder or not right_shoulder:
+                # Default assumption: left is lead (orthodox stance)
+                return arm == 'left'
+            
+            # Calculate which shoulder is forward (closer to camera in Z)
+            left_forward = left_shoulder['z'] > right_shoulder['z']
+            
+            # In orthodox stance (left forward), left is jab, right is cross
+            # In southpaw stance (right forward), right is jab, left is cross
+            if left_forward:  # Orthodox stance
+                return arm == 'left'
+            else:  # Southpaw stance  
+                return arm == 'right'
+                
+        except (KeyError, TypeError, AttributeError):
+            # Default assumption: left is lead (orthodox stance)
+            return arm == 'left'
+    
+    def get_punch_statistics(self, arm: str) -> Dict:
+        """
+        Get comprehensive punch statistics for an arm.
+        
+        Args:
+            arm: 'left' or 'right'
+            
+        Returns:
+            Dictionary with punch statistics
+        """
+        return {
+            'count': self.punch_counts[arm],
+            'score': int(self.punch_scores[arm]),
+            'last_type': self.last_punch_types[arm].value,
+            'stage': self.punch_stages[arm].value,
+            'trajectory_points': len(self.trajectory_buffers[arm])
+        }
+    
+    def reset_statistics(self, arm: Optional[str] = None) -> None:
+        """
+        Reset punch statistics.
+        
+        Args:
+            arm: Specific arm to reset, or None for both arms
+        """
+        arms_to_reset = [arm] if arm else ['left', 'right']
+        
+        for reset_arm in arms_to_reset:
+            self.punch_counts[reset_arm] = 0
+            self.punch_scores[reset_arm] = 0
+            self.punch_stages[reset_arm] = PunchStage.GUARD
+            self.last_punch_types[reset_arm] = PunchType.UNKNOWN
+            self.trajectory_buffers[reset_arm].clear()
+    
+    def get_all_statistics(self) -> Dict:
+        """
+        Get statistics for both arms.
+        
+        Returns:
+            Dictionary with statistics for left and right arms
+        """
+        return {
+            'left': self.get_punch_statistics('left'),
+            'right': self.get_punch_statistics('right')
+        }
