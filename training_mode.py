@@ -15,37 +15,30 @@ from pathlib import Path
 
 # Boxing combination mapping
 COMBO_MAP = {
-    (1, 1.1): "jab_head",
-    (1, 1.2): "jab_body", 
-    (2, 2.1): "cross_head",
-    (2, 2.2): "cross_body",
-    (3, 3.1): "left_hook_head",
-    (3, 3.2): "left_hook_body",
-    (4, 4.1): "right_hook_head", 
-    (4, 4.2): "right_hook_body",
-    (5, 5.1): "left_uppercut_head",
-    (5, 5.2): "left_uppercut_body",
-    (6, 6.1): "right_uppercut_head",
-    (6, 6.2): "right_uppercut_body"
+    "1":  "jab_head",
+    "1b": "jab_body",
+    "2":  "cross_head",
+    "2b": "cross_body",
+    "3":  "lead_hook_head",
+    "3b": "lead_hook_body",
+    "4":  "rear_hook_head",
+    "4b": "rear_hook_body",
+    "5":  "lead_uppercut_head",
+    "5b": "lead_uppercut_body",
+    "6":  "rear_uppercut_head",
+    "6b": "rear_uppercut_body",
 }
 def parse_combo_string(combo_str):
-    """Parse combo string like '1,2,3.1,4.2' into list of punch keys."""
+    """Parse combo string like '1,2,3b,4b' into list of punch keys."""
     combo_keys = []
     
     for item in combo_str.split(','):
-        item = item.strip()
-        if '.' in item:
-            # Handle decimal notation (e.g., '3.1')
-            main_num, sub_num = item.split('.')
-            key = (int(main_num), float(item))
-        else:
-            # Handle integer notation (e.g., '1' -> '1.1')
-            key = (int(item), float(f"{item}.1"))
+        key = item.strip()
         
         if key in COMBO_MAP:
             combo_keys.append(key)
         else:
-            print(f"Warning: Unknown combo key {item}, skipping...")
+            print(f"Warning: Unknown combo key '{key}', skipping...")
     
     return combo_keys
 
@@ -85,6 +78,11 @@ def speak_prompt(text):
         except:
             pass
 
+def create_speak_text(label):
+    """Convert punch label to natural speech text."""
+    speak_text = label.replace("_", " ").replace("head", "to the head").replace("body", "to the body")
+    return f"{speak_text} — go!"
+
 def get_next_session_number():
     """Find the next available session number."""
     session_num = 1
@@ -95,7 +93,7 @@ def get_next_session_number():
 def main():
     parser = argparse.ArgumentParser(description="Training Mode - Automated Boxing Training Recorder")
     parser.add_argument('--combo', type=str, required=True,
-                       help='Comma-separated combo sequence (e.g., "1,2,3.1,4.2")')
+                       help='Comma-separated combo sequence (e.g., "1,2,3b,4b")')
     parser.add_argument('--output', type=str, 
                        help='Output base name (default: sessionX)')
     parser.add_argument('--interval', type=float, default=3.0,
@@ -179,89 +177,109 @@ def main():
         print("Starting training sequence...")
         time.sleep(1)
         
-        # Main training loop
-        for i, combo_key in enumerate(combo_keys):
-            punch_name = COMBO_MAP[combo_key]
-            prompt = f"Throw {punch_name.replace('_', ' ')}"
-            
-            print(f"[{i+1}/{len(combo_keys)}] Frame {frame_count}: {prompt}")
-            
-            # BEFORE speaking: capture frame and write to video
-            ret, frame = cap.read()
-            if ret:
-                out.write(frame)
-                
-                # Show live preview during training (smaller window)
-                preview_frame = cv2.resize(frame, (320, 240))
-                cv2.putText(preview_frame, f"Recording: {prompt}", (5, 20), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
-                cv2.putText(preview_frame, f"Frame: {frame_count}", (5, 35), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
-                cv2.imshow('Training Live', preview_frame)
-                cv2.waitKey(1)
-                
-                # Log this frame with the punch key
-                csv_data.append({
-                    'frame_index': frame_count,
-                    'punch_key': f"{combo_key[0]}.{str(combo_key[1]).split('.')[1]}"
-                })
-                
-                frame_count += 1
-            
-            # THEN speak the prompt using improved TTS function
-            speak_prompt(prompt)
-            
-            # Sleep for the specified interval
-            if i < len(combo_keys) - 1:  # Don't sleep after the last prompt
-                sleep_start = time.time()
-                while time.time() - sleep_start < args.interval:
-                    # Continue capturing frames during sleep
-                    ret, frame = cap.read()
-                    if ret:
-                        out.write(frame)
-                        
-                        # Update live preview
-                        preview_frame = cv2.resize(frame, (320, 240))
-                        remaining_time = args.interval - (time.time() - sleep_start)
-                        cv2.putText(preview_frame, f"Next in: {remaining_time:.1f}s", (5, 50), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
-                        cv2.imshow('Training Live', preview_frame)
-                        cv2.waitKey(1)
-                        
-                        frame_count += 1
-                    time.sleep(0.03)  # ~30fps capture rate
+        # Record ENTIRE session continuously, log TTS timestamps for post-processing
+        start_time = time.time()
+        prompt_times = [start_time + i * args.interval for i in range(len(combo_keys))]
+        prompt_idx = 0
+        tts_timestamps = []  # Log when each TTS actually fired
         
-        # Continue capturing for 1 additional second to finalize
-        print("Finalizing recording...")
-        finalize_start = time.time()
-        while time.time() - finalize_start < 1.0:
+        print(f"Recording started at {start_time:.2f}")
+        print("Strategy: Record everything, extract punch windows post-processing")
+        
+        while True:
+            # Record every frame continuously
             ret, frame = cap.read()
-            if ret:
-                out.write(frame)
+            if not ret:
+                print("Error: Lost webcam connection!")
+                break
                 
-                # Update live preview
-                preview_frame = cv2.resize(frame, (320, 240))
-                cv2.putText(preview_frame, "Finalizing...", (5, 20), 
+            out.write(frame)
+            now = time.time()
+            
+            # Calculate current frame index based on time and FPS
+            frame_idx = int((now - start_time) * fps)
+            
+            # Show live preview
+            preview_frame = cv2.resize(frame, (320, 240))
+            cv2.putText(preview_frame, f"Recording: Frame {frame_idx}", (5, 20), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+            
+            # Trigger TTS when time arrives for next prompt
+            if prompt_idx < len(prompt_times) and now >= prompt_times[prompt_idx]:
+                combo_key = combo_keys[prompt_idx]
+                label = COMBO_MAP[combo_key]
+                speak_text = create_speak_text(label)
+                
+                # Log the ACTUAL TTS timestamp and frame for post-processing
+                tts_timestamp = {
+                    'prompt_idx': prompt_idx,
+                    'combo_key': combo_key,
+                    'tts_time': now - start_time,
+                    'tts_frame': frame_idx,
+                    'prompt_text': speak_text
+                }
+                tts_timestamps.append(tts_timestamp)
+                
+                print(f"[TTS {prompt_idx+1}/{len(combo_keys)}] t={tts_timestamp['tts_time']:.2f}s, Frame {frame_idx}: {speak_text}")
+                
+                # Update preview with current prompt
+                cv2.putText(preview_frame, f"TTS: {speak_text}", (5, 35), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 0), 1)
+                
+                # Trigger TTS (non-blocking)
+                speak_prompt(speak_text)
+                prompt_idx += 1
+            
+            # Show countdown to next prompt or session end
+            if prompt_idx < len(prompt_times):
+                time_to_next = prompt_times[prompt_idx] - now
+                cv2.putText(preview_frame, f"Next TTS: {time_to_next:.1f}s", (5, 50), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+            else:
+                # After all prompts, show finalization countdown
+                time_remaining = (prompt_times[-1] + 3.0) - now  # 3 second tail for final punch
+                cv2.putText(preview_frame, f"Finishing: {time_remaining:.1f}s", (5, 50), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
-                cv2.imshow('Training Live', preview_frame)
-                cv2.waitKey(1)
+            
+            cv2.imshow('Training Live', preview_frame)
+            cv2.waitKey(1)
+            
+            # Exit condition: all prompts complete + 3 second tail for final punch
+            if prompt_idx >= len(prompt_times) and now >= prompt_times[-1] + 3.0:
+                print("Recording completed with 3-second tail")
+                break
                 
-                frame_count += 1
-            time.sleep(0.03)
+            # Emergency exit on 'q' press
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                print("Recording stopped by user")
+                break
+        
         
         cv2.destroyAllWindows()
         
-        # Write CSV data
+        # Write labels CSV in format expected by extract_punch_clips.py
+        csv_data = []
+        for ts in tts_timestamps:
+            csv_data.append({
+                'frame_index': ts['tts_frame'],
+                'punch_key': ts['combo_key']
+            })
+        
         with open(csv_filename, 'w', newline='') as csvfile:
             fieldnames = ['frame_index', 'punch_key']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(csv_data)
         
-        print(f"\nTraining session completed!")
-        print(f"Total frames recorded: {frame_count}")
+        print(f"\nSession completed!")
+        print(f"Total duration: {final_duration:.2f} seconds")
+        print(f"Total frames recorded: {final_frame_count}")
         print(f"Video saved: {video_filename}")
-        print(f"Labels saved: {csv_filename}")
+        print(f"TTS timestamps saved: {csv_filename}")
+        print(f"Total prompts: {len(tts_timestamps)}")
+        print()
+        print("POST-PROCESSING: Use the timestamps to extract punch windows from the full video")
+        print("Example: Extract frames [tts_frame + 30 : tts_frame + 75] for each punch (1-1.5s after TTS)")
         
     except KeyboardInterrupt:
         print("\nTraining session interrupted by user.")
