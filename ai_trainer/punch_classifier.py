@@ -40,7 +40,6 @@ class PunchClassifier:
     torso-normalized trajectory, and adaptive thresholds.
     """
     def __init__(self, thresholds: Optional[Dict[str, float]] = None, 
-
                  trajectory_buffer_size: int = 30, fps: int = 30):
         # Initialize per-arm trajectory buffers
         self.trajectory_buffers = {
@@ -169,11 +168,7 @@ class PunchClassifier:
             return None
         
         # Convert landmark dict format to numpy array for compatibility
-
         wrist_pos = np.array([wrist['x'], wrist['y'], wrist.get('z', 0)])
-
-
-
         self.trajectory_buffers[active].append(wrist_pos)
         
         # Update baselines
@@ -201,7 +196,6 @@ class PunchClassifier:
         return None
 
     def classify_punch(self, landmarks: Dict[str, np.ndarray], arm: str, training_mode=None) -> tuple:
-
 
         """
         Classify punch type for compatibility with main.py.
