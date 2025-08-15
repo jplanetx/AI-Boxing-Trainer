@@ -40,6 +40,7 @@ class PunchClassifier:
     torso-normalized trajectory, and adaptive thresholds.
     """
     def __init__(self, thresholds: Optional[Dict[str, float]] = None, 
+
                  trajectory_buffer_size: int = 30, fps: int = 30):
         # Initialize per-arm trajectory buffers
         self.trajectory_buffers = {
@@ -151,8 +152,11 @@ class PunchClassifier:
             punch_angle < self.thresholds['punch_cone_angle']
         )
 
-    def process_frame(self, landmarks: Dict[str, np.ndarray]) -> Optional[Dict[str, any]]:
-        """Call this for each frame; returns punch info if detected."""
+    def process_frame(self, landmarks: Dict[str, np.ndarray], pose_tracker=None) -> Optional[Dict[str, any]]:
+        """
+        Enhanced frame processing with 3D trajectory analysis.
+        Call this for each frame; returns punch info if detected.
+        """
         # Store for current baseline/angle
         self.current_landmarks = landmarks
         # Determine active arm
@@ -163,30 +167,42 @@ class PunchClassifier:
         wrist = landmarks.get(f'{active}_wrist')
         if wrist is None:
             return None
-        self.trajectory_buffers[active].append(wrist)
+        
+        # Convert landmark dict format to numpy array for compatibility
+
+        wrist_pos = np.array([wrist['x'], wrist['y'], wrist.get('z', 0)])
+
+
+
+        self.trajectory_buffers[active].append(wrist_pos)
+        
         # Update baselines
         self.update_baselines()
 
-        # If punch motion detected
-        if self.is_punch_motion(active):
+        # Enhanced punch detection with 3D analysis
+        if self.is_punch_motion_3d(active, landmarks, pose_tracker):
             # Reset buffer to avoid duplicate detection
             self.trajectory_buffers[active].clear()
             
-            # Map to punch_key format (simplified detection for now)
-            # This can be enhanced with more sophisticated classification
-            if active == 'left':
-                punch_key = 1  # Default to jab_head for left arm
-            else:
-                punch_key = 2  # Default to cross_head for right arm
+            # Enhanced punch classification using 3D data
+            punch_type, confidence = self.classify_punch_type_3d(active, landmarks, pose_tracker)
+            
+            # Map to punch_key format with improved classification
+            punch_key = self._get_punch_key(active, punch_type)
                 
             return { 
                 'arm': active, 
                 'type': 'punch',
-                'punch_key': punch_key
+                'punch_key': punch_key,
+                'punch_type': punch_type.value,
+                'confidence': confidence
             }
+
         return None
 
     def classify_punch(self, landmarks: Dict[str, np.ndarray], arm: str, training_mode=None) -> tuple:
+
+
         """
         Classify punch type for compatibility with main.py.
         Returns (punch_type, count, score) tuple.
@@ -215,6 +231,94 @@ class PunchClassifier:
             'score': int(self.punch_scores[arm]),
             'last_type': self.last_punch_types[arm].value
         }
+
+    def is_punch_motion_3d(self, arm: str, landmarks: Dict, pose_tracker=None) -> bool:
+        """
+        Enhanced punch detection using 3D trajectory analysis.
+        """
+        # Fall back to 2D detection if no pose tracker available
+        if pose_tracker is None:
+            return self.is_punch_motion(arm)
+        
+        # Get 3D velocity from pose tracker
+        velocity_3d = pose_tracker.calculate_3d_velocity(landmarks, arm)
+        if velocity_3d is None:
+            return self.is_punch_motion(arm)
+        
+        # Get 3D trajectory analysis
+        trajectory_3d = pose_tracker.get_punch_trajectory_3d(landmarks, arm)
+        if trajectory_3d is None:
+            return self.is_punch_motion(arm)
+        
+        # Enhanced 3D thresholds
+        min_3d_velocity = 50.0  # pixels/frame in 3D space
+        min_forward_extension = 30.0  # pixels forward movement
+        min_smoothness = 0.3  # trajectory smoothness threshold
+        
+        return bool(
+            velocity_3d > min_3d_velocity and
+            trajectory_3d['forward_extension'] > min_forward_extension and
+            trajectory_3d['smoothness'] > min_smoothness and
+            trajectory_3d['total_distance_3d'] > self.thresholds['min_distance'] * 1000  # Convert to pixels
+        )
+    
+    def classify_punch_type_3d(self, arm: str, landmarks: Dict, pose_tracker=None) -> tuple:
+        """
+        Classify punch type using 3D trajectory analysis.
+        Returns (PunchType, confidence_score)
+        """
+        if pose_tracker is None:
+            return (PunchType.UNKNOWN, 0.5)
+        
+        trajectory_3d = pose_tracker.get_punch_trajectory_3d(landmarks, arm)
+        if trajectory_3d is None:
+            return (PunchType.UNKNOWN, 0.5)
+        
+        # Extract trajectory characteristics
+        forward_ext = trajectory_3d['forward_extension']
+        lateral_mov = trajectory_3d['lateral_movement']
+        vertical_mov = trajectory_3d['vertical_movement']
+        smoothness = trajectory_3d['smoothness']
+        
+        # Classification logic based on 3D trajectory patterns
+        confidence = min(1.0, smoothness + 0.3)  # Base confidence on smoothness
+        
+        # Jab: Straight forward, minimal lateral movement
+        if forward_ext > 40 and lateral_mov < 20 and abs(vertical_mov) < 30:
+            return (PunchType.JAB, confidence)
+        
+        # Cross: Strong forward extension with slight body rotation
+        elif forward_ext > 50 and lateral_mov < 40 and abs(vertical_mov) < 40:
+            return (PunchType.CROSS, confidence)
+        
+        # Hook: High lateral movement, moderate forward extension
+        elif lateral_mov > 40 and forward_ext > 20 and abs(vertical_mov) < 50:
+            return (PunchType.HOOK, confidence * 0.9)  # Slightly lower confidence
+        
+        # Uppercut: Significant upward movement
+        elif vertical_mov < -30 and forward_ext > 15:  # Negative Y is upward
+            return (PunchType.UPPERCUT, confidence * 0.8)
+        
+        # Default to unknown with lower confidence
+        return (PunchType.UNKNOWN, confidence * 0.6)
+    
+    def _get_punch_key(self, arm: str, punch_type: PunchType) -> int:
+        """
+        Map arm and punch type to punch key for compatibility with existing system.
+        """
+        # Mapping based on existing punch key system
+        punch_key_map = {
+            ('left', PunchType.JAB): 1,
+            ('left', PunchType.CROSS): 3,
+            ('left', PunchType.HOOK): 5,
+            ('left', PunchType.UPPERCUT): 7,
+            ('right', PunchType.JAB): 2,
+            ('right', PunchType.CROSS): 2,  # Right cross is common
+            ('right', PunchType.HOOK): 6,
+            ('right', PunchType.UPPERCUT): 8,
+        }
+        
+        return punch_key_map.get((arm, punch_type), 1 if arm == 'left' else 2)
 
     def reset_statistics(self) -> None:
         """Reset all statistics."""

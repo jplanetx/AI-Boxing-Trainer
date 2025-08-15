@@ -1,113 +1,54 @@
 # Product Requirements Document (PRD) Prompt: AI Boxing Trainer V1
 
-
-
 ## 1. Objective
-
-
 
 Transform the existing Python-based AI Boxing Trainer prototype into a market-ready V1 desktop application. The primary goal is to create a robust, accurate, and engaging training tool that provides real-time feedback on boxing technique, moving beyond simple punch counting to offer actionable insights for improvement. This V1 will serve as the foundation for a future cross-platform, subscription-based service.
 
-
-
 ## 2. Background & Current State
-
-
 
 The current application is a functional prototype that uses MediaPipe's 2D pose estimation to count punches in real-time. It successfully implements a multi-criteria state machine (guard → punching → returning) and calculates a simple speed-based score.
 
-
-
 However, it has key limitations that prevent commercial viability:
-
 * **No Punch Differentiation**: It cannot distinguish between jabs, crosses, hooks, and uppercuts.
-
 * **No Form Analysis**: It does not provide any feedback on the user's technique.
-
 * **Environmental Sensitivity**: It assumes a frontal pose and struggles with angled views, which are common in real-world heavy bag training.
-
-
 
 ## 3. Target Audience
 
-
-
 * **Primary**: Amateur boxers and fitness enthusiasts who train at home using shadowboxing or a heavy bag.
-
 * **Secondary**: Boxing coaches and personal trainers looking for tools to supplement their clients' training.
-
-
 
 ## 4. Core Epics & User Stories for V1
 
-
-
 **Epic 1: Precision Punch Recognition**
-
 * **User Story 1.1**: As a user, I want the application to accurately detect and differentiate between the four fundamental punches (jab, cross, hook, uppercut) so I can track my workout composition.
-
 * **User Story 1.2**: As a user, I want to see a real-time counter on screen for each type of punch I throw.
 
-
-
 **Epic 2: Real-Time Form Analysis & Feedback**
-
 * **User Story 2.1**: As a user, I want to receive a real-time form score (e.g., A-F grade or percentage) for each punch I throw, based on ideal biomechanics.
-
 * **User Story 2.2**: As a user, when my form is incorrect, I want to see simple, actionable text feedback on the screen (e.g., "Extend your arm more," "Rotate your hips") to help me improve.
 
-
-
 **Epic 3: Intelligent Heavy Bag Mode**
-
 * **User Story 3.1**: As a user training on a heavy bag, I want the application to automatically detect my angled position and adjust its tracking to maintain accuracy, even if one side of my body is partially obscured.
-
 * **User Story 3.2**: As a user setting up, I want to see on-screen guidance that helps me position my camera for optimal tracking performance.
 
-
-
 **Epic 4: Gamified Training Experience**
-
 * **User Story 4.1**: As a user, I want to be able to start a timed round (e.g., 3 minutes) and see my total punch count and average form score at the end.
-
 * **User Story 4.2**: As a user, I want the ability to follow pre-set combinations called out by the application (using TTS) and have my performance tracked.
-
-
 
 ## 5. Technical Requirements & Success Metrics
 
-
-
 * **Core Technology**: Upgrade the pose estimation engine from the current 2D model to **MediaPipe's BlazePose GHUM 3D** model (`model_complexity=2`) to enable 3D trajectory analysis.
-
 * **Punch Classification**: Implement a `PunchClassifier` module that uses the 3D landmark data (wrist trajectory, shoulder/hip rotation) to distinguish between punch types.
-
 * **Form Analysis**: Implement a `FormAnalyzer` module that scores punches based on deviations from ideal joint angles for each punch type.
-
 * **Performance Metrics**:
-
     * **Accuracy**: Achieve >90% punch classification accuracy in optimal conditions.
-
     * **Latency**: Maintain a motion-to-detection latency of <50ms.
-
     * **Framerate**: The application must run at a minimum of 30 FPS on modern consumer hardware.
-
-
 
 ## 6. Out of Scope for V1
 
-
-
 * Mobile/Web Applications (Flutter, React Native, WebAssembly).
-
 * Cloud-based analytics and user accounts.
-
 * Advanced defensive move detection (slips, weaves).
-
 * Monetization features (Freemium, Pro, Coach tiers).
-
-
-
-
-
-
