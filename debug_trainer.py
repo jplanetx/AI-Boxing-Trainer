@@ -10,6 +10,10 @@ import time
 import sys
 import os
 
+# Explicit imports to resolve Pylance errors
+from mediapipe.python.solutions import pose as mp_pose
+from mediapipe.python.solutions import drawing_utils as mp_drawing
+
 # Add the project root to Python path
 project_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, project_root)
@@ -22,22 +26,17 @@ def debug_trainer():
     print("Press 'q' to quit")
     print()
     
-    # Initialize MediaPipe
-    mp_pose = mp.solutions.pose
     pose = mp_pose.Pose(
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5,
-        model_complexity=1  # Use lighter model for stability
+        model_complexity=1
     )
-    mp_drawing = mp.solutions.drawing_utils
     
-    # Initialize camera
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("❌ Could not open camera")
         return
     
-    # Key landmarks we need
     key_landmarks = {
         'left_shoulder': mp_pose.PoseLandmark.LEFT_SHOULDER,
         'right_shoulder': mp_pose.PoseLandmark.RIGHT_SHOULDER,
@@ -60,71 +59,50 @@ def debug_trainer():
             frame = cv2.flip(frame, 1)
             frame_height, frame_width = frame.shape[:2]
             
-            # Convert BGR to RGB
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             rgb_frame.flags.writeable = False
-            
-            # Process pose
             results = pose.process(rgb_frame)
-            
-            # Convert back to BGR
             rgb_frame.flags.writeable = True
             processed_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
             
-            # Extract and display landmark info
             landmarks_found = {}
-            if results.pose_landmarks:
+            if hasattr(results, 'pose_landmarks') and results.pose_landmarks:
                 try:
                     for name, landmark_idx in key_landmarks.items():
                         landmark = results.pose_landmarks.landmark[landmark_idx.value]
-                        
-                        x = landmark.x * frame_width
-                        y = landmark.y * frame_height
-                        z = landmark.z * frame_width
-                        visibility = landmark.visibility
-                        
-                        if visibility > 0.1:  # Very low threshold
+                        if landmark.visibility > 0.1:
                             landmarks_found[name] = {
-                                'x': x, 'y': y, 'z': z, 
-                                'visibility': visibility
+                                'x': landmark.x * frame_width, 'y': landmark.y * frame_height, 'z': landmark.z * frame_width, 
+                                'visibility': landmark.visibility
                             }
                     
-                    # Draw pose landmarks
                     mp_drawing.draw_landmarks(
                         processed_frame, 
                         results.pose_landmarks, 
-                        mp_pose.POSE_CONNECTIONS
+                        list(mp_pose.POSE_CONNECTIONS)
                     )
                     
                 except Exception as e:
                     print(f"Frame {frame_count}: Landmark extraction error: {e}")
             
-            # Display landmark count and status
             cv2.rectangle(processed_frame, (0, 0), (400, 100), (0, 0, 0), -1)
             
             landmarks_count = len(landmarks_found)
             cv2.putText(processed_frame, f"Landmarks Found: {landmarks_count}/8", 
                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             
-            # Show which landmarks are missing
-            missing = []
-            for name in key_landmarks.keys():
-                if name not in landmarks_found:
-                    missing.append(name.replace('_', ' ').title())
+            missing = [name.replace('_', ' ').title() for name in key_landmarks if name not in landmarks_found]
             
             if missing:
-                missing_text = f"Missing: {', '.join(missing[:3])}"
-                if len(missing) > 3:
-                    missing_text += "..."
+                missing_text = f"Missing: {', '.join(missing[:3])}{'...' if len(missing) > 3 else ''}"
                 cv2.putText(processed_frame, missing_text, 
                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
             else:
                 cv2.putText(processed_frame, "All landmarks detected!", 
                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
             
-            # Show pose detection status
-            pose_status = "POSE DETECTED" if results.pose_landmarks else "NO POSE"
-            status_color = (0, 255, 0) if results.pose_landmarks else (0, 0, 255)
+            pose_status = "POSE DETECTED" if hasattr(results, 'pose_landmarks') and results.pose_landmarks else "NO POSE"
+            status_color = (0, 255, 0) if pose_status == "POSE DETECTED" else (0, 0, 255)
             cv2.putText(processed_frame, pose_status, 
                        (frame_width - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
             
@@ -132,7 +110,6 @@ def debug_trainer():
             
             frame_count += 1
             
-            # Print landmark status every 30 frames
             if frame_count % 30 == 0:
                 print(f"Frame {frame_count}: {landmarks_count}/8 landmarks, Missing: {missing}")
             
