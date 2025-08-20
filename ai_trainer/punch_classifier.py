@@ -83,14 +83,22 @@ class PunchClassifier:
             ls = landmarks['left_shoulder']
             rs = landmarks['right_shoulder']
             nose = landmarks['nose']
-        except KeyError:
+            
+            # Convert dictionary landmarks to numpy arrays
+            lw_arr = np.array([lw['x'], lw['y'], lw.get('z', 0)])
+            rw_arr = np.array([rw['x'], rw['y'], rw.get('z', 0)])
+            ls_arr = np.array([ls['x'], ls['y'], ls.get('z', 0)])
+            rs_arr = np.array([rs['x'], rs['y'], rs.get('z', 0)])
+            nose_arr = np.array([nose['x'], nose['y'], nose.get('z', 0)])
+            
+        except (KeyError, TypeError):
             return None
 
         # Torso forward vector
-        torso_vec = normalize(nose - 0.5 * (ls + rs))
+        torso_vec = normalize(nose_arr - 0.5 * (ls_arr + rs_arr))
         # Arm extension vectors
-        left_vec = normalize(lw - ls)
-        right_vec = normalize(rw - rs)
+        left_vec = normalize(lw_arr - ls_arr)
+        right_vec = normalize(rw_arr - rs_arr)
         # Compare projections
         left_score = np.dot(left_vec, torso_vec)
         right_score = np.dot(right_vec, torso_vec)
@@ -108,9 +116,16 @@ class PunchClassifier:
             rh = landmarks['right_hip']
             ls = landmarks['left_shoulder']
             rs = landmarks['right_shoulder']
-        except KeyError:
+            
+            # Convert dictionary landmarks to numpy arrays
+            lh_arr = np.array([lh['x'], lh['y'], lh.get('z', 0)])
+            rh_arr = np.array([rh['x'], rh['y'], rh.get('z', 0)])
+            ls_arr = np.array([ls['x'], ls['y'], ls.get('z', 0)])
+            rs_arr = np.array([rs['x'], rs['y'], rs.get('z', 0)])
+            
+        except (KeyError, TypeError):
             return None
-        return normalize((rh - lh) + (rs - ls))
+        return normalize((rh_arr - lh_arr) + (rs_arr - ls_arr))
 
     def update_baselines(self):
         """Update dynamic baseline velocity from recent motion."""

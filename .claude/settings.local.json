@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(env)",
+      "Bash(python:*)",
+      "WebSearch",
+      "Bash(archon:get_available_sources)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
