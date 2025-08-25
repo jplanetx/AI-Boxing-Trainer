@@ -4,7 +4,12 @@
       "Bash(env)",
       "Bash(python:*)",
       "WebSearch",
-      "Bash(archon:get_available_sources)"
+      "Bash(archon:get_available_sources)",
+      "Bash(archon:*)",
+      "WebFetch(domain:pmc.ncbi.nlm.nih.gov)",
+      "WebFetch(domain:www.mdpi.com)",
+      "WebFetch(domain:www.frontiersin.org)",
+      "WebFetch(domain:www.thescienceofstriking.com)"
     ],
     "deny": [],
     "ask": []
