@@ -1,4 +1,4 @@
-# Elevate AI - Individual Punch Recorder
+# Individual Punch Recorder
 
 **Clean, focused ML training data generator for boxing punch tracking.**
 
